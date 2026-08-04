@@ -160,24 +160,44 @@ jobs:
               return;
             }
 
-            core.setOutput('artifact_sha', mergedPr.head.sha);
-            core.setOutput('artifact_name', `python-app-${mergedPr.head.sha}`);
-            core.info(`Promoting artifact from PR #${mergedPr.number}: ${mergedPr.head.sha}`);
+            const artifactSha = mergedPr.head.sha;
+
+            // Find the dev-cicd.yml run that built this exact commit
+            const runs = await github.rest.actions.listWorkflowRuns({
+              owner,
+              repo,
+              workflow_id: 'dev-cicd.yml',
+              head_sha: artifactSha,
+              status: 'success',
+            });
+
+            if (runs.data.workflow_runs.length === 0) {
+              core.setFailed(`No successful dev-cicd.yml run found for commit ${artifactSha}`);
+              return;
+            }
+
+            // Most recent successful run for that SHA
+            const run = runs.data.workflow_runs[0];
+
+            core.setOutput('artifact_sha', artifactSha);
+            core.setOutput('artifact_name', `python-app-${artifactSha}`);
+            core.setOutput('run_id', run.id);
+            core.info(`Promoting artifact from PR #${mergedPr.number}: ${artifactSha} (run ${run.id})`);
 
       - name: Download promoted artifact from PR validation
-        uses: dawidd6/action-download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          workflow: prod-cicd.yml
-          commit: ${{ steps.promoted.outputs.artifact_sha }}
           name: ${{ steps.promoted.outputs.artifact_name }}
-          if_no_artifact_found: fail
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ steps.promoted.outputs.run_id }}
 
       - name: Verify promoted artifact identity
         shell: bash
         run: |
           EXPECTED_SHA="${{ steps.promoted.outputs.artifact_sha }}"
           ACTUAL_SHA="$(cat artifact-sha.txt)"
+          echo "Expected SHA: $EXPECTED_SHA"
+          echo "Actual SHA: $ACTUAL_SHA"
           if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
             echo "Artifact SHA mismatch: expected $EXPECTED_SHA, got $ACTUAL_SHA"
             exit 1
