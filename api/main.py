@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from config import RESOURCE_GROUP_TO_PROJECT_MAPPING, INCLUDED_RESOURCE_GROUPS, RESOURCE_TO_PROJECT_MAPPING
 from report_generator import aggregate_resource_costs, build_excel_report
 
-app = FastAPI(title="Azure Cost Report API")
+app = FastAPI(title="Azure Cost Report API V2.0")
 
 EXCEL_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
