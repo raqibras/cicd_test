@@ -187,7 +187,7 @@ jobs:
         uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ vars.AZURE_WEBAPP }}
-          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE }}
+          publish-profile: ${{ secrets.AZURE_PUBLISHPROFILE }}
 
   # Create a rollback point only after production deploy succeeds.
   tag-release:
