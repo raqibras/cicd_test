@@ -5,8 +5,8 @@ from io import StringIO
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from api.config import RESOURCE_GROUP_TO_PROJECT_MAPPING, INCLUDED_RESOURCE_GROUPS, RESOURCE_TO_PROJECT_MAPPING
-from api.report_generator import aggregate_resource_costs, build_excel_report
+from config import RESOURCE_GROUP_TO_PROJECT_MAPPING, INCLUDED_RESOURCE_GROUPS, RESOURCE_TO_PROJECT_MAPPING
+from report_generator import aggregate_resource_costs, build_excel_report
 
 app = FastAPI(title="Azure Cost Report API")
 
@@ -102,6 +102,3 @@ async def consolidated_report_endpoint(file: UploadFile = File(...)):
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)

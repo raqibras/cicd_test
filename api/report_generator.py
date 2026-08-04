@@ -11,7 +11,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
 from openpyxl.utils import get_column_letter
 
-from api.config import (
+from config import (
     RESOURCE_GROUP_TO_PROJECT_MAPPING,
     RESOURCE_TO_PROJECT_MAPPING,
     INCLUDED_RESOURCE_GROUPS,
