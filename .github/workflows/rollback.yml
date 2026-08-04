@@ -1,0 +1,68 @@
+name: Rollback - Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag release to restore (ex: release-20260615-1230-a1b2c3d)'
+        required: true
+        type: string
+      environment:
+        description: 'target enviroment'
+        required: true
+        default: Production
+        type: choice
+        options:
+          - Production
+          - QA
+      run_tests:
+        description: 'Run tests before deploy?'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment }}   # Production rollbacks still require manual approval.
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout from release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}        # the exact state of that release
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install requirements
+        if: ${{ inputs.run_tests }}
+        run: |
+          pip install -r requirements.txt pytest
+          pytest
+
+      - name: Pack release (exclui .git)
+        run: zip -r release.zip . -x ".git/*"
+
+      - name: Deploy the rollback in QA
+        if: ${{ inputs.environment == 'QA' }}
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ vars.AZURE_WEBAPP }}
+          publish-profile: ${{ secrets.AZURE_PUBLISHPROFILE }}
+          package: release.zip
+
+      - name: Deploy the rollback in Production
+        if: ${{ inputs.environment == 'Production' }}
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ vars.AZURE_WEBAPP }}
+          publish-profile: ${{ secrets.AZURE_PUBLISHPROFILE }}
+          package: release.zip
