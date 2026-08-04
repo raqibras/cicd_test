@@ -101,3 +101,7 @@ async def consolidated_report_endpoint(file: UploadFile = File(...)):
         media_type=EXCEL_MEDIA_TYPE,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
