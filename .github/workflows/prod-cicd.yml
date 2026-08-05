@@ -26,7 +26,7 @@ name: CI/CD - Production
 #     -> PR dev -> main
 #     -> production PR validation
 #     -> merge
-#     -> production downloads EXACT dev-cicd artifact
+#     -> deploys downloads EXACT dev-cicd artifact
 #     -> verify artifact
 #     -> deploy production
 #     -> create release tag
@@ -51,7 +51,7 @@ jobs:
   # This job validates the PR source code.
   # This job does NOT build or upload another production artifact.
   # The deployable artifact must come from dev-cicd.yml.
-  PR-Validation:
+  pr-validation:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
@@ -195,7 +195,7 @@ jobs:
           echo "=============================================="
 
   # Production Deployment
-  Deploy-Prod:
+  deploy-prod:
     if: github.event_name == 'push' && github.ref_name == 'main'
     runs-on: ubuntu-latest
     permissions:
@@ -373,26 +373,13 @@ jobs:
           publish-profile: ${{ secrets.AZURE_PUBLISHPROFILE }}
           package: .
 
-      - name: Production deployment summary
-        run: |
-          echo "=============================================="
-          echo "Production deployment successful"
-          echo "=============================================="
-          echo "PR Number        : #${{ steps.promoted.outputs.pr_number }}"
-          echo "Source SHA       : ${{ steps.promoted.outputs.artifact_sha }}"
-          echo "Merge SHA        : ${{ steps.promoted.outputs.merge_commit_sha }}"
-          echo "Dev CI Run ID    : ${{ steps.promoted.outputs.run_id }}"
-          echo "Artifact ID      : ${{ steps.promoted.outputs.artifact_id }}"
-          echo "Artifact Name    : ${{ steps.promoted.outputs.artifact_name }}"
-          echo "Artifact Digest  : ${{ steps.promoted.outputs.artifact_digest }}"
-          echo "=============================================="
 
   # Release Tag
-  Tag-Release:
+  tag-release:
     if: github.event_name == 'push' && github.ref_name == 'main'
     runs-on: ubuntu-latest
     needs:
-      - Deploy-Prod
+      - deploy-prod
     permissions:
       contents: write
 
