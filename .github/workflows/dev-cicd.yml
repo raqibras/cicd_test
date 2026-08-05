@@ -47,11 +47,6 @@ jobs:
           pip install -r requirements.txt
           pip install ruff bandit pip-audit pytest
 
-      - name: Code quality test (Lint)
-        run: |
-          source antenv/bin/activate
-          ruff check . || true
-
       - name: SAST scan (Bandit)
         run: |
           source antenv/bin/activate
@@ -60,7 +55,7 @@ jobs:
       - name: Dependency security scan
         run: |
           source antenv/bin/activate
-          pip-audit -r requirements.txt || true
+          pip-audit -r requirements.txt
 
       - name: Run unit tests
         run: |
@@ -88,14 +83,14 @@ jobs:
             --exclude '__pycache__/' \
             --exclude '*.pyc'
           echo "${GITHUB_SHA}" > deploy-package/artifact-sha.txt
-
+      
+      # Upload deploy-package artifact. Happens after merge to dev.    
       - name: Upload deploy-package artifact
-        # PRs into dev validate only. QA deployment happens after merge to dev.
         if: github.event_name == 'push'
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.artifact-meta.outputs.artifact_name }}
-          retention-days: 7
+          retention-days: 14
           path: deploy-package/
 
   # Automatic QA deployment after code is merged into dev.
