@@ -58,6 +58,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+  
 
     steps:
       - name: Checkout PR source commit
@@ -195,7 +196,7 @@ jobs:
           echo "Dev CI Run ID    : ${{ steps.dev-artifact.outputs.run_id }}"
           echo "Artifact ID      : ${{ steps.dev-artifact.outputs.artifact_id }}"
           echo "Artifact Name    : ${{ steps.dev-artifact.outputs.artifact_name }}"
-          echo "Artifact Digest  : ${{ steps.dev-artifact.outputs.artifact_digest }}"
+          echo "Artifact Digest  : ${{ steps.dev-artifact.outputs.artifact_digest }}" 
           echo "=============================================="
 
   # ============================================================
@@ -203,7 +204,6 @@ jobs:
   # ============================================================
   Deploy-Prod:
     if: github.event_name == 'push' && github.ref_name == 'main'
-    needs: PR-Validation
     runs-on: ubuntu-latest
     permissions:
       actions: read
