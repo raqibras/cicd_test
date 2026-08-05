@@ -11,12 +11,18 @@ name: CI/CD - Production
 #     produced by dev-cicd for the PR HEAD SHA, verify it, deploy it,
 #     and create a release tag.
 #
+# Requires:
+# Environment named 'Production' with the following variables and secrets:
+# - AZURE_WEBAPP: Name of the Azure Web App for Production - variable
+# - AZURE_PUBLISHPROFILE: Publish profile for the Production environment - secret
+#
 # Artifact promotion model:
 #
 #   dev commit
 #     -> dev-cicd.yml
 #     -> build + test + security scan
 #     -> immutable artifact
+#     -> Deploy to QA
 #     -> PR dev -> main
 #     -> production PR validation
 #     -> merge
@@ -42,16 +48,9 @@ env:
   DEV_WORKFLOW_FILE: 'dev-cicd.yml'
 
 jobs:
-  # ============================================================
-  # PR VALIDATION
-  # ============================================================
-  #
   # This job validates the PR source code.
-  #
-  # IMPORTANT:
   # This job does NOT build or upload another production artifact.
   # The deployable artifact must come from dev-cicd.yml.
-  #
   PR-Validation:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -119,10 +118,6 @@ jobs:
           source antenv/bin/activate
           pytest
 
-      # ----------------------------------------------------------
-      # Verify that dev-cicd successfully built the exact artifact
-      # for this PR HEAD SHA.
-      # ----------------------------------------------------------
       - name: Verify promoted dev artifact exists
         id: dev-artifact
         uses: actions/github-script@v7
@@ -199,9 +194,7 @@ jobs:
           echo "Artifact Digest  : ${{ steps.dev-artifact.outputs.artifact_digest }}" 
           echo "=============================================="
 
-  # ============================================================
-  # PRODUCTION DEPLOYMENT
-  # ============================================================
+  # Production Deployment
   Deploy-Prod:
     if: github.event_name == 'push' && github.ref_name == 'main'
     runs-on: ubuntu-latest
@@ -217,10 +210,7 @@ jobs:
       url: https://${{ vars.AZURE_WEBAPP }}.azurewebsites.net
 
     steps:
-      # ----------------------------------------------------------
-      # Resolve the exact PR that produced the current main SHA.
-      # ----------------------------------------------------------
-      - name: Resolve merged dev -> main PR
+      - name: Resolve promoted artifact from merged PR  # Resolve the exact PR that produced the current main SHA.
         id: promoted
         uses: actions/github-script@v7
         env:
@@ -350,65 +340,66 @@ jobs:
             core.setOutput('run_id', run.id);
             core.setOutput('merge_commit_sha', mergedPr.merge_commit_sha);
 
-      # ----------------------------------------------------------
-      # Download EXACT artifact from EXACT dev-cicd run.
-      # ----------------------------------------------------------
+
       - name: Download promoted artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ steps.promoted.outputs.artifact_name }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ steps.promoted.outputs.run_id }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ARTIFACT_ID: ${{ steps.promoted.outputs.artifact_id }}
+        run: |
+          echo "Downloading artifact ID: $ARTIFACT_ID"
 
-      # ----------------------------------------------------------
-      # Verify artifact source SHA.
-      # ----------------------------------------------------------
-      - name: Verify promoted artifact source SHA
+          curl -L \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" \
+            -o promoted-artifact.zip
+
+          ls -lh promoted-artifact.zip
+
+  
+      - name: Validate artifact digest
+        id: digest
+        shell: bash
+        env:
+          EXPECTED_DIGEST: ${{ steps.promoted.outputs.artifact_digest }}
+        run: |
+          ACTUAL_DIGEST=$(sha256sum promoted-artifact.zip | awk '{print $1}')
+
+          echo "Downloaded artifact SHA-256: $ACTUAL_DIGEST"
+
+          echo "actual_digest=$ACTUAL_DIGEST" >> "$GITHUB_OUTPUT" 
+          EXPECTED_DIGEST="${EXPECTED_DIGEST#sha256:}"
+
+              echo "Expected GitHub digest : $EXPECTED_DIGEST"
+              echo "Actual downloaded hash : $ACTUAL_DIGEST"
+
+              if [ "$ACTUAL_DIGEST" != "$EXPECTED_DIGEST" ]; then
+                echo "ERROR: Artifact digest mismatch."
+                exit 1
+              fi
+
+              echo "Artifact digest verified successfully."
+       
+
+
+      - name: Extract verified artifact
         shell: bash
         run: |
-          EXPECTED_SHA="${{ steps.promoted.outputs.artifact_sha }}"
-          ACTUAL_SHA="$(cat artifact-sha.txt)"
+          mkdir -p deploy-package
 
-          echo "Expected source SHA: $EXPECTED_SHA"
-          echo "Artifact source SHA: $ACTUAL_SHA"
+          unzip -q promoted-artifact.zip -d deploy-package
 
-          if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
-            echo "ERROR: Artifact SHA mismatch."
-            exit 1
-          fi
+          echo "Verified artifact extracted successfully."
 
-          echo "Artifact source SHA verified successfully."
 
-      # ----------------------------------------------------------
-      # Verify expected production package structure.
-      # ----------------------------------------------------------
-      - name: Verify production package
-        shell: bash
-        run: |
-          echo "Contents of promoted artifact:"
-          find . -maxdepth 2 -type f | sort
-
-          if [ ! -f "artifact-sha.txt" ]; then
-            echo "ERROR: artifact-sha.txt is missing."
-            exit 1
-          fi
-
-          if [ ! -f "requirements.txt" ]; then
-            echo "ERROR: requirements.txt is missing."
-            exit 1
-          fi
-
-          echo "Production package structure verified."
-
-      # ----------------------------------------------------------
-      # Deploy EXACT promoted artifact.
-      # ----------------------------------------------------------
       - name: Deploy to Production
         uses: azure/webapps-deploy@v3
         with:
           app-name: ${{ vars.AZURE_WEBAPP }}
           publish-profile: ${{ secrets.AZURE_PUBLISHPROFILE }}
-          package: .
+          package: ./deploy-package
 
       - name: Production deployment summary
         run: |
@@ -424,9 +415,7 @@ jobs:
           echo "Artifact Digest  : ${{ steps.promoted.outputs.artifact_digest }}"
           echo "=============================================="
 
-  # ============================================================
-  # RELEASE TAG
-  # ============================================================
+  # Release Tag
   Tag-Release:
     if: github.event_name == 'push' && github.ref_name == 'main'
     runs-on: ubuntu-latest
