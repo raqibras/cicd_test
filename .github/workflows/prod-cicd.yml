@@ -51,7 +51,7 @@ jobs:
   # This job validates the PR source code.
   # This job does NOT build or upload another production artifact.
   # The deployable artifact must come from dev-cicd.yml.
-  PR-Validation:
+  pr-validation:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
@@ -195,7 +195,7 @@ jobs:
           echo "=============================================="
 
   # Production Deployment
-  Deploy-Prod:
+  deploy-prod:
     if: github.event_name == 'push' && github.ref_name == 'main'
     runs-on: ubuntu-latest
     permissions:
@@ -368,31 +368,27 @@ jobs:
           ACTUAL_DIGEST=$(sha256sum promoted-artifact.zip | awk '{print $1}')
 
           echo "Downloaded artifact SHA-256: $ACTUAL_DIGEST"
-
           echo "actual_digest=$ACTUAL_DIGEST" >> "$GITHUB_OUTPUT" 
+
           EXPECTED_DIGEST="${EXPECTED_DIGEST#sha256:}"
+          echo "Expected digest : $EXPECTED_DIGEST"
 
-              echo "Expected GitHub digest : $EXPECTED_DIGEST"
-              echo "Actual downloaded hash : $ACTUAL_DIGEST"
+          if [ "$ACTUAL_DIGEST" != "$EXPECTED_DIGEST" ]; then
+            echo "ERROR: Artifact digest mismatch."
+            exit 1
+          fi
 
-              if [ "$ACTUAL_DIGEST" != "$EXPECTED_DIGEST" ]; then
-                echo "ERROR: Artifact digest mismatch."
-                exit 1
-              fi
-
-              echo "Artifact digest verified successfully."
+          echo "Artifact digest verified successfully."
+          rm -f promoted-artifact.zip
        
 
 
-      - name: Extract verified artifact
-        shell: bash
-        run: |
-          mkdir -p deploy-package
-
-          unzip -q promoted-artifact.zip -d deploy-package
-
-          echo "Verified artifact extracted successfully."
-
+      - name: Download promoted artifact
+        uses: actions/download-artifact@v4
+        with:
+          artifact-ids: ${{ steps.promoted.outputs.artifact_id }}
+          path: deploy-package
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Deploy to Production
         uses: azure/webapps-deploy@v3
@@ -401,26 +397,13 @@ jobs:
           publish-profile: ${{ secrets.AZURE_PUBLISHPROFILE }}
           package: ./deploy-package
 
-      - name: Production deployment summary
-        run: |
-          echo "=============================================="
-          echo "Production deployment successful"
-          echo "=============================================="
-          echo "PR Number        : #${{ steps.promoted.outputs.pr_number }}"
-          echo "Source SHA       : ${{ steps.promoted.outputs.artifact_sha }}"
-          echo "Merge SHA        : ${{ steps.promoted.outputs.merge_commit_sha }}"
-          echo "Dev CI Run ID    : ${{ steps.promoted.outputs.run_id }}"
-          echo "Artifact ID      : ${{ steps.promoted.outputs.artifact_id }}"
-          echo "Artifact Name    : ${{ steps.promoted.outputs.artifact_name }}"
-          echo "Artifact Digest  : ${{ steps.promoted.outputs.artifact_digest }}"
-          echo "=============================================="
 
   # Release Tag
-  Tag-Release:
+  tag-release:
     if: github.event_name == 'push' && github.ref_name == 'main'
     runs-on: ubuntu-latest
     needs:
-      - Deploy-Prod
+      - deploy-prod
     permissions:
       contents: write
 
