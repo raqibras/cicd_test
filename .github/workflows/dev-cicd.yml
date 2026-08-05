@@ -19,7 +19,6 @@ on:
   push:
     branches:
       - dev
-  workflow_dispatch:
 
 env:
   PYTHON_VERSION: '3.13'
