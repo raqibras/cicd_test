@@ -33,10 +33,10 @@ jobs:
       contents: read
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -45,7 +45,7 @@ jobs:
           python -m venv antenv
           source antenv/bin/activate
           pip install -r requirements.txt
-          pip install ruff bandit pip-audit pytest
+          pip install bandit pip-audit pytest
 
       - name: SAST scan (Bandit)
         run: |
@@ -87,10 +87,10 @@ jobs:
       # Upload deploy-package artifact. Happens after merge to dev.    
       - name: Upload deploy-package artifact
         if: github.event_name == 'push'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.artifact-meta.outputs.artifact_name }}
-          retention-days: 14
+          retention-days: 30
           path: deploy-package/
 
   # Automatic QA deployment after code is merged into dev.
@@ -107,7 +107,7 @@ jobs:
 
     steps:
       - name: Download deploy package artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: ${{ needs.build-test.outputs.artifact_name }}
 
