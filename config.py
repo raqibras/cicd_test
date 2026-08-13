@@ -8,7 +8,7 @@ RESOURCE_GROUP_TO_PROJECT_MAPPING = {
     'rg-devai-contentgen': 'Content Generation',
     'rg-actpto-lz-prod-001': 'PTO-Prod',
     'devaiteam': 'AI Team Resources'
-    # Add more mappings as needed.
+    # Add more mappings as required.
 }
     
     # Resource groups to INCLUDE in the report
