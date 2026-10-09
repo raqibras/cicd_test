@@ -1,0 +1,106 @@
+name: Resolve Merged PR
+description: Find the merged source-branch -> base-branch PR whose merge commit matches a commit SHA
+
+inputs:
+  commit-sha:
+    description: Commit on the base branch to resolve (defaults to the SHA that triggered the workflow)
+    required: false
+    default: ${{ github.sha }}
+  base-branch:
+    description: Branch the PR must have been merged into
+    required: false
+    default: main
+  head-branch:
+    description: Branch the PR must have been opened from
+    required: false
+    default: dev
+  max-attempts:
+    description: How many times to query before giving up (the commit -> PR link can lag after a merge)
+    required: false
+    default: '6'
+  retry-delay-seconds:
+    description: Seconds to wait between attempts
+    required: false
+    default: '5'
+  github-token:
+    description: Token used to call the GitHub API (needs pull-requests:read)
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  pr_number:
+    description: Number of the merged PR
+    value: ${{ steps.resolve.outputs.pr_number }}
+  head_sha:
+    description: Head commit SHA of the merged PR (the commit the dev artifact was built from)
+    value: ${{ steps.resolve.outputs.head_sha }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve merged PR
+      id: resolve
+      uses: actions/github-script@v8
+      env:
+        COMMIT_SHA: ${{ inputs.commit-sha }}
+        BASE_BRANCH: ${{ inputs.base-branch }}
+        HEAD_BRANCH: ${{ inputs.head-branch }}
+        MAX_ATTEMPTS: ${{ inputs.max-attempts }}
+        RETRY_DELAY_SECONDS: ${{ inputs.retry-delay-seconds }}
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const { owner, repo } = context.repo;
+          const commitSha = process.env.COMMIT_SHA;
+          const baseBranch = process.env.BASE_BRANCH;
+          const headBranch = process.env.HEAD_BRANCH;
+          const maxAttempts = Math.max(1, parseInt(process.env.MAX_ATTEMPTS, 10) || 6);
+          const delayMs = Math.max(0, parseInt(process.env.RETRY_DELAY_SECONDS, 10) || 5) * 1000;
+          const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+          if (!/^[0-9a-f]{40}$/i.test(commitSha || '')) {
+            core.setFailed(`Input 'commit-sha' is empty or not a full 40-character commit SHA: '${commitSha}'`);
+            return;
+          }
+
+          core.info(`Commit SHA: ${commitSha}`);
+          core.info(`Expecting merged PR: ${headBranch} -> ${baseBranch}`);
+
+          // The commit -> PR association can lag right after a merge, so retry.
+          let mergedPr;
+          for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            const prs = await github.paginate(
+              'GET /repos/{owner}/{repo}/commits/{commit_sha}/pulls',
+              { owner, repo, commit_sha: commitSha, per_page: 100,
+                headers: { 'X-GitHub-Api-Version': '2022-11-28' } }
+            );
+
+            mergedPr = prs.find(
+              (pr) =>
+                pr.merged_at &&
+                pr.base.ref === baseBranch &&
+                pr.head.ref === headBranch &&
+                pr.head.repo &&
+                pr.head.repo.full_name === `${owner}/${repo}` &&
+                pr.merge_commit_sha === commitSha
+            );
+
+            if (mergedPr) break;
+
+            core.info(`Attempt ${attempt}/${maxAttempts}: no matching merged PR yet (${prs.length} PR(s) returned).`);
+            if (attempt < maxAttempts) await sleep(delayMs);
+          }
+
+          if (!mergedPr) {
+            core.setFailed(
+              `No merged ${headBranch} -> ${baseBranch} PR was found whose merge_commit_sha matches ${commitSha}. ` +
+              `Direct pushes, hotfix branches and reverts are not deployable through this pipeline.`
+            );
+            return;
+          }
+
+          core.info(`PR number : #${mergedPr.number}`);
+          core.info(`PR head SHA: ${mergedPr.head.sha}`);
+
+          core.setOutput('pr_number', mergedPr.number);
+          core.setOutput('head_sha', mergedPr.head.sha);
