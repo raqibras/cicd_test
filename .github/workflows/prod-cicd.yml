@@ -114,7 +114,7 @@ jobs:
       - name: Verify promoted artifact source SHA
         shell: bash
         env:
-          EXPECTED_SHA: ${{ steps.resolve.outputs.artifact_sha }}
+          EXPECTED_SHA: ${{ steps.resolve.outputs.head_sha }}
         run: |
           ACTUAL_SHA="$(cat app/artifact-sha.txt)"
 
