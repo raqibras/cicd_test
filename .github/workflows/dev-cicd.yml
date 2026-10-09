@@ -122,14 +122,6 @@ jobs:
             exit 1
           fi
 
-      - name: Generate settings.json
-        env:
-          SAML_ENTITY_ID: ${{ vars.SAML_ENTITY_ID }}
-          SAML_CALLBACK_URL: ${{ vars.SAML_CALLBACK_URL }}
-          SAML_CERT: ${{ secrets.SAML_CERT }}
-        run: |
-          envsubst '${SAML_ENTITY_ID} ${SAML_CALLBACK_URL} ${SAML_CERT}' \
-          < saml/settings.json.template > saml/settings.json
 
       - name: Deploy to QA
         uses: azure/webapps-deploy@v3
