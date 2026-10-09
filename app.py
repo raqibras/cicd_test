@@ -5,7 +5,7 @@ app = Flask(__name__)
 
 @app.route("/")
 def home():
-    return "Hi World!. This is a UV project."
+    return "Hi World!."
 
 if __name__ == "__main__":
     app.run(debug=False)
