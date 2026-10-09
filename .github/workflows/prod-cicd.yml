@@ -1,0 +1,163 @@
+name: CI/CD - Production
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  DEV_WORKFLOW_FILE: 'dev-cicd.yml'
+
+jobs:
+  pr-validation:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+
+    steps:
+      - name: Checkout action definitions
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github/actions
+
+      - name: Verify PR source branch
+        shell: bash
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          THIS_REPO: ${{ github.repository }}
+
+        run: |
+          echo "Source branch : $HEAD_REF"
+          echo "Target branch : $BASE_REF"
+          echo "PR HEAD SHA   : $HEAD_SHA"
+
+          [ "$HEAD_REPO" = "$THIS_REPO" ] || { echo "Production promotion is not allowed from forks."; exit 1; }
+          [ "$HEAD_REF" = "dev" ]  || { echo "Production promotion is only allowed from dev."; exit 1; }
+          [ "$BASE_REF" = "main" ] || { echo "Production promotion must target main."; exit 1; }
+
+      - name: Verify promoted dev artifact exists
+        id: dev-artifact
+        uses: ./.github/actions/find-promoted-artifact
+        with:
+          sha: ${{ github.event.pull_request.head.sha }}
+          workflow-file: ${{ env.DEV_WORKFLOW_FILE }}
+          branch: dev
+
+      - name: Production artifact validation summary
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_ID: ${{ steps.dev-artifact.outputs.run_id }}
+          ARTIFACT_ID: ${{ steps.dev-artifact.outputs.artifact_id }}
+          ARTIFACT_NAME: ${{ steps.dev-artifact.outputs.artifact_name }}
+          ARTIFACT_DIGEST: ${{ steps.dev-artifact.outputs.artifact_digest }}
+        run: |
+          echo "Production candidate validated successfully"
+          echo "=============================================="
+          echo "PR HEAD SHA      : $HEAD_SHA"
+          echo "Dev CI Run ID    : $RUN_ID"
+          echo "Artifact ID      : $ARTIFACT_ID"
+          echo "Artifact Name    : $ARTIFACT_NAME"
+          echo "Artifact Digest  : $ARTIFACT_DIGEST"
+
+  deploy-to-production:
+    if: github.event_name == 'push' && github.ref_name == 'main'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    concurrency:
+      group: ${{ github.repository }}-prod-deploy
+      cancel-in-progress: false
+    environment:
+      name: Production
+      url: https://${{ vars.AZURE_WEBAPP }}.azurewebsites.net
+
+    steps:
+      - name: Checkout action definitions
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: .github/actions
+
+      - name: Resolve merged PR
+        id: resolve
+        uses: ./.github/actions/resolve-merged-pr
+        with:
+          commit-sha: ${{ github.sha }}
+          base-branch: main
+          head-branch: dev
+
+      - name: Find promoted dev artifact
+        id: dev-artifact
+        uses: ./.github/actions/find-promoted-artifact
+        with:
+          sha: ${{ steps.resolve.outputs.head_sha }}
+          workflow-file: ${{ env.DEV_WORKFLOW_FILE }}
+
+      - name: Download promoted artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: ${{ steps.dev-artifact.outputs.artifact_name }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ steps.dev-artifact.outputs.run_id }}
+          path: app
+
+      - name: Verify promoted artifact source SHA
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ steps.resolve.outputs.artifact_sha }}
+        run: |
+          ACTUAL_SHA="$(cat app/artifact-sha.txt)"
+
+          echo "Expected source SHA: $EXPECTED_SHA"
+          echo "Artifact source SHA: $ACTUAL_SHA"
+
+          [ "$ACTUAL_SHA" = "$EXPECTED_SHA" ] || { echo "ERROR: Artifact SHA mismatch."; exit 1; }
+          echo "Artifact source SHA verified successfully."
+
+      - name: Generate settings.json
+        env:
+          SAML_ENTITY_ID: ${{ vars.SAML_ENTITY_ID }}
+          SAML_CALLBACK_URL: ${{ vars.SAML_CALLBACK_URL }}
+          SAML_CERT: ${{ secrets.SAML_CERT }}
+        run: |
+          envsubst '${SAML_ENTITY_ID} ${SAML_CALLBACK_URL} ${SAML_CERT}' \
+            < app/saml/settings.json.template > app/saml/settings.json
+
+      - name: Deploy to Production
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ vars.AZURE_WEBAPP }}
+          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE }} 
+          package: app
+
+  tag-release:
+    if: github.event_name == 'push' && github.ref_name == 'main'
+    needs: deploy-to-production
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Create release tag
+        shell: bash
+        run: |
+          TAG="release-$(date -u +%Y%m%d-%H%M)-${GITHUB_SHA::7}"
+          echo "Creating release tag: $TAG"
+          git tag "$TAG"
+          git push origin "$TAG"
+          echo "Release tag created successfully: $TAG"

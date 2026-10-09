@@ -1,0 +1,86 @@
+name: Rollback - Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag release to restore (ex: release-20260615-1230-a1b2c3d)'
+        required: true
+        type: string
+      environment:
+        description: 'target environment'
+        required: true
+        default: production
+        type: choice
+        options:
+          - Production
+          - QA
+      run_tests:
+        description: 'Run tests before deploy ?(Uncheck for emergency rollback)'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  PYTHON_VERSION: '3.11'
+  AZURE_WEBAPP_QA:   'devaiwebfunctions'    
+  AZURE_WEBAPP_PROD: 'app-alta-prod-001'
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ inputs.environment }}   # Production rollbacks still require manual approval.
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout from release tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.tag }}        # the exact state of that release
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Generate settings.json
+        env:
+          SAML_ENTITY_ID: ${{ vars.SAML_ENTITY_ID }}
+          SAML_CALLBACK_URL: ${{ vars.SAML_CALLBACK_URL }}
+          SAML_CERT: ${{ secrets.SAML_CERT }}
+        run: |
+          envsubst '${SAML_ENTITY_ID} ${SAML_CALLBACK_URL} ${SAML_CERT}' \
+          < saml/settings.json.template > saml/settings.json   
+      
+      - name: Install requirements
+        if: ${{ inputs.run_tests }}
+        run: |
+          pip install -r requirements.txt
+
+      - name: Pack release
+        run: |
+          zip -r release.zip . \
+            -x ".git/*" \
+            -x ".github/*" \
+            -x "antenv/" \
+            -x "tests/*" \
+            -x ".pytest_cache/*" \
+            -x "__pycache__/*" \
+            -x "*.pyc"
+      
+      - name: Deploy the rollback in QA
+        if: ${{ inputs.environment == 'QA' }}
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_QA }}
+          publish-profile: ${{ secrets.APPSERVICE_PUBLISHPROFILE }}
+          package: release.zip
+
+      - name: Deploy the rollback in production
+        if: ${{ inputs.environment == 'Production' }}
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ env.AZURE_WEBAPP_PROD }}
+          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_8E79E3C98110486A845EF93DB6E8CEFE }}
+          package: release.zip
