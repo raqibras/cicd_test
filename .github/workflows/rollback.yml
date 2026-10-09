@@ -37,27 +37,32 @@ jobs:
         with:
           ref: ${{ inputs.tag }}        # the exact state of that release
 
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-  
-      
-      - name: Install requirements
-        if: ${{ inputs.run_tests }}
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Install dependencies
         run: |
-          pip install -r requirements.txt
+          uv sync --locked --all-groups      
 
       - name: Pack release
         run: |
-          zip -r release.zip . \
-            -x ".git/*" \
-            -x ".github/*" \
-            -x "antenv/" \
-            -x "tests/*" \
-            -x ".pytest_cache/*" \
-            -x "__pycache__/*" \
-            -x "*.pyc"
+          mkdir -p deploy-package
+          rsync -a ./ deploy-package/ \
+            --exclude '.git/' \
+            --exclude '.github/' \
+            --exclude 'antenv/' \
+            --exclude '.venv/' \
+            --exclude 'tests/' \
+            --exclude '.pytest_cache/' \
+            --exclude '__pycache__/' \
+            --exclude '*.pyc'
+          uv export --locked --no-dev --format requirements-txt \
+            --output-file deploy-package/requirements.txt
+          echo "${GITHUB_SHA}" > deploy-package/artifact-sha.txt
       
       - name: Deploy the rollback in QA
         if: ${{ inputs.environment == 'QA' }}
@@ -65,7 +70,7 @@ jobs:
         with:
           app-name: ${{ vars.AZURE_WEBAPP }}
           publish-profile: ${{ secrets.APPSERVICE_PUBLISHPROFILE }}
-          package: release.zip
+          package: deploy-package
 
       - name: Deploy the rollback in production
         if: ${{ inputs.environment == 'Production' }}
@@ -73,4 +78,4 @@ jobs:
         with:
           app-name: ${{ vars.AZURE_WEBAPP }}
           publish-profile: ${{ secrets.APPSERVICE_PUBLISHPROFILE }}
-          package: release.zip
+          package: deploy-package

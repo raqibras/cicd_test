@@ -40,30 +40,24 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
-          cache-dependency-glob: "requirements.txt"
+          cache-dependency-glob: "uv.lock"
 
       - name: Install dependencies
         run: |
-          uv venv antenv --python ${{ env.PYTHON_VERSION }}
-          source antenv/bin/activate
-          uv pip install -r requirements.txt
-          uv pip install bandit pip-audit
+          uv sync --locked --all-groups
 
       - name: SAST scan (Bandit)
         continue-on-error: true
         shell: bash
-        run: |
-          source antenv/bin/activate
-          bandit -r . --exclude ./antenv,./tests -ll
+        run: uv run bandit -r . --exclude ./.venv,./tests -ll
 
       - name: Dependency security scan
         continue-on-error: true
         shell: bash
-        run: |
-          source antenv/bin/activate
-          pip-audit -r requirements.txt
+        run: uv run pip-audit
 
       - name: Select artifact identity
+        if: github.ref == 'refs/heads/dev' && github.event_name != 'pull_request'
         id: artifact-meta
         shell: bash
         run: |
@@ -78,10 +72,13 @@ jobs:
             --exclude '.git/' \
             --exclude '.github/' \
             --exclude 'antenv/' \
+            --exclude '.venv/' \
             --exclude 'tests/' \
             --exclude '.pytest_cache/' \
             --exclude '__pycache__/' \
             --exclude '*.pyc'
+          uv export --locked --no-dev --format requirements-txt \
+            --output-file deploy-package/requirements.txt
           echo "${GITHUB_SHA}" > deploy-package/artifact-sha.txt
       
       # Upload deploy-package artifact. Happens after merge to dev.    
