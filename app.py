@@ -14,5 +14,9 @@ def about():
 def health():
     return "APIs Healthy"
 
+@app.route("/version")
+def version():
+    return "Version 1.0.0"
+
 if __name__ == "__main__":
     app.run(debug=False)
