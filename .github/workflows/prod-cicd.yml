@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 env:
-  DEV_WORKFLOW_FILE: 'dev-cicd.yml'
+  DEV_WORKFLOW_FILE: 'qa-cicd.yml'
 
 jobs:
   pr-validation:
@@ -41,8 +41,15 @@ jobs:
           echo "PR HEAD SHA   : $HEAD_SHA"
 
           [ "$HEAD_REPO" = "$THIS_REPO" ] || { echo "Production promotion is not allowed from forks."; exit 1; }
-          [ "$HEAD_REF" = "dev" ]  || { echo "Production promotion is only allowed from dev."; exit 1; }
           [ "$BASE_REF" = "main" ] || { echo "Production promotion must target main."; exit 1; }
+          [ "$HEAD_REF" = "dev" ]  || { echo "Production promotion is only allowed from dev."; exit 1; }
+
+          case "$HEAD_REF" in
+            dev)       echo "source_type=dev" >> "$GITHUB_OUTPUT" ;;
+            hotfix/*)  echo "source_type=hotfix" >> "$GITHUB_OUTPUT" ;;
+            *)         echo "Production promotion is only allowed from dev or hotfix/* branches."; exit 1 ;;
+          esac
+
 
       - name: Verify promoted dev artifact exists
         id: dev-artifact
