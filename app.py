@@ -8,7 +8,7 @@ def home():
 
 @app.route("/health")
 def health():
-    return "Health"
+    return "APIs Healthy"
 
 if __name__ == "__main__":
     app.run(debug=False)
