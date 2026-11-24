@@ -10,6 +10,9 @@ def home():
 def about():
     return "This is the about page."
 
+@app.route("/health")
+def health():
+    return "Health"
 
 if __name__ == "__main__":
     app.run(debug=False)
