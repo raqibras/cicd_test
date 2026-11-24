@@ -23,6 +23,7 @@ permissions:
 
 env:
   PYTHON_VERSION: '3.11'
+  ARTIFACT_SHA: ${{ (github.event_name == 'pull_request' && github.base_ref == 'main' && startsWith(github.head_ref, 'hotfix/')) && github.event.pull_request.head.sha || github.sha }}
 
 jobs:
   # Shared CI gate for PRs into dev and pushes to dev.
@@ -35,6 +36,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.ARTIFACT_SHA }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v6
@@ -58,14 +61,14 @@ jobs:
         run: uv run pip-audit
 
       - name: Select artifact identity
-        if: github.ref == 'refs/heads/dev' && github.event_name != 'pull_request'
+        if: github.ref == 'refs/heads/dev' && github.event_name != 'pull_request' || (github.event_name == 'pull_request' && github.base_ref == 'main' && startsWith(github.head_ref, 'hotfix/'))
         id: artifact-meta
         shell: bash
         run: |
-          echo "artifact_name=python-app-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=python-app-${ARTIFACT_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Prepare deploy package
-        if: github.ref == 'refs/heads/dev' && github.event_name != 'pull_request'
+        if: github.ref == 'refs/heads/dev' && github.event_name != 'pull_request' || (github.event_name == 'pull_request' && github.base_ref == 'main' && startsWith(github.head_ref, 'hotfix/'))
         shell: bash
         run: |
           mkdir -p deploy-package
@@ -80,11 +83,11 @@ jobs:
             --exclude '*.pyc'
           uv export --locked --no-dev --no-hashes --no-emit-project \
             -o deploy-package/requirements.txt
-          echo "${GITHUB_SHA}" > deploy-package/artifact-sha.txt
+          echo "${ARTIFACT_SHA}" > deploy-package/artifact-sha.txt
       
       # Upload deploy-package artifact. Happens after merge to dev.    
       - name: Upload deploy-package artifact
-        if: github.ref == 'refs/heads/dev' && github.event_name != 'pull_request'
+        if: github.ref == 'refs/heads/dev' && github.event_name != 'pull_request' || (github.event_name == 'pull_request' && github.base_ref == 'main' && startsWith(github.head_ref, 'hotfix/'))
         uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.artifact-meta.outputs.artifact_name }}
@@ -115,8 +118,8 @@ jobs:
         shell: bash
         run: |
           ACTUAL_SHA="$(cat artifact-sha.txt)"
-          if [ "$ACTUAL_SHA" != "${GITHUB_SHA}" ]; then
-            echo "Artifact SHA mismatch: expected ${GITHUB_SHA}, got $ACTUAL_SHA"
+          if [ "$ACTUAL_SHA" != "${ARTIFACT_SHA}" ]; then
+            echo "Artifact SHA mismatch: expected ${ARTIFACT_SHA}, got $ACTUAL_SHA"
             exit 1
           fi
 

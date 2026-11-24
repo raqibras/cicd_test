@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 env:
-  DEV_WORKFLOW_FILE: 'qa-cicd.yml'
+  CI_WORKFLOW_FILE: 'qa-cicd.yml'
 
 jobs:
   pr-validation:
@@ -42,7 +42,6 @@ jobs:
 
           [ "$HEAD_REPO" = "$THIS_REPO" ] || { echo "Production promotion is not allowed from forks."; exit 1; }
           [ "$BASE_REF" = "main" ] || { echo "Production promotion must target main."; exit 1; }
-          [ "$HEAD_REF" = "dev" ]  || { echo "Production promotion is only allowed from dev."; exit 1; }
 
           case "$HEAD_REF" in
             dev)       echo "source_type=dev" >> "$GITHUB_OUTPUT" ;;
@@ -51,13 +50,14 @@ jobs:
           esac
 
 
-      - name: Verify promoted dev artifact exists
+      - name: Verify promoted artifact exists
         id: dev-artifact
         uses: ./.github/actions/find-promoted-artifact
         with:
           sha: ${{ github.event.pull_request.head.sha }}
-          workflow-file: ${{ env.DEV_WORKFLOW_FILE }}
-          branch: dev
+          workflow-file: ${{ env.CI_WORKFLOW_FILE }}
+          branch: ${{ github.head_ref }}
+          max-attempts: '20'
 
       - name: Production artifact validation summary
         env:
@@ -70,7 +70,7 @@ jobs:
           echo "Production candidate validated successfully"
           echo "=============================================="
           echo "PR HEAD SHA      : $HEAD_SHA"
-          echo "Dev CI Run ID    : $RUN_ID"
+          echo "CI Run ID        : $RUN_ID"
           echo "Artifact ID      : $ARTIFACT_ID"
           echo "Artifact Name    : $ARTIFACT_NAME"
           echo "Artifact Digest  : $ARTIFACT_DIGEST"
@@ -103,19 +103,20 @@ jobs:
           base-branch: main
           head-branch: dev
 
-      - name: Find promoted dev artifact
-        id: dev-artifact
+      - name: Find promoted artifact
+        id: artifact
         uses: ./.github/actions/find-promoted-artifact
         with:
           sha: ${{ steps.resolve.outputs.head_sha }}
-          workflow-file: ${{ env.DEV_WORKFLOW_FILE }}
+          workflow-file: ${{ env.CI_WORKFLOW_FILE }}
+          branch: ${{ steps.resolve.outputs.head_branch }}
 
       - name: Download promoted artifact
         uses: actions/download-artifact@v8
         with:
-          name: ${{ steps.dev-artifact.outputs.artifact_name }}
+          name: ${{ steps.artifact.outputs.artifact_name }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ steps.dev-artifact.outputs.run_id }}
+          run-id: ${{ steps.artifact.outputs.run_id }}
           path: app
 
       - name: Verify promoted artifact source SHA
