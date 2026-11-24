@@ -1,17 +1,25 @@
 name: Find Promoted Artifact
-description: Find the successful dev CI run and python-app-<sha> artifact for a commit SHA
+description: Find the successful CI run and python-app-<sha> artifact for a commit SHA
 
 inputs:
   sha:
     description: Commit SHA whose promoted artifact should be located
     required: true
   workflow-file:
-    description: Dev CI workflow file expected to have produced the artifact
+    description: CI workflow file expected to have produced the artifact
     required: true
   branch:
-    description: Branch the dev CI run must have executed on
+    description: Source branch the CI run must have executed on
     required: false
     default: dev
+  max-attempts:
+    description: How many times to check for the successful run and artifact
+    required: false
+    default: '6'
+  retry-delay-seconds:
+    description: Seconds to wait between checks
+    required: false
+    default: '10'
   github-token:
     description: Token used to call the GitHub API (needs actions:read)
     required: false
@@ -19,7 +27,7 @@ inputs:
 
 outputs:
   run_id:
-    description: Dev CI run ID that produced the artifact
+    description: CI run ID that produced the artifact
     value: ${{ steps.lookup.outputs.run_id }}
   artifact_id:
     description: GitHub Actions artifact ID
@@ -34,20 +42,26 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Look up successful dev CI run and artifact
+    - name: Look up successful CI run and artifact
       id: lookup
       uses: actions/github-script@v8
       env:
         ARTIFACT_SHA: ${{ inputs.sha }}
         WORKFLOW_FILE: ${{ inputs.workflow-file }}
-        DEV_BRANCH: ${{ inputs.branch }}
+        SOURCE_BRANCH: ${{ inputs.branch }}
+        MAX_ATTEMPTS: ${{ inputs.max-attempts }}
+        RETRY_DELAY_SECONDS: ${{ inputs.retry-delay-seconds }}
       with:
         github-token: ${{ inputs.github-token }}
         script: |
           const { owner, repo } = context.repo;
           const artifactSha = process.env.ARTIFACT_SHA;
           const workflowFile = process.env.WORKFLOW_FILE;
-          const devBranch = process.env.DEV_BRANCH;
+          const sourceBranch = process.env.SOURCE_BRANCH;
+          const isHotfixBranch = sourceBranch.startsWith('hotfix/');
+          const maxAttempts = Math.max(1, parseInt(process.env.MAX_ATTEMPTS, 10) || 6);
+          const delayMs = Math.max(0, parseInt(process.env.RETRY_DELAY_SECONDS, 10) || 5) * 1000;
+          const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
           if (!/^[0-9a-f]{40}$/i.test(artifactSha || '')) {
             core.setFailed(`Input 'sha' is empty or not a full 40-character commit SHA: '${artifactSha}'`);
@@ -56,74 +70,89 @@ runs:
 
           core.info(`Looking up SHA: ${artifactSha}`);
           core.info(`Expected workflow: ${workflowFile}`);
-          core.info(`Expected branch: ${devBranch}`);
-
-          // Only successful runs on the dev branch, never pull_request runs.
-          // push and workflow_dispatch runs on dev are both acceptable, since a
-          // manual run is how an expired artifact gets regenerated.
-          const runsResponse = await github.rest.actions.listWorkflowRuns({
-            owner, repo,
-            workflow_id: workflowFile,
-            head_sha: artifactSha,
-            branch: devBranch,
-            status: 'success',
-            exclude_pull_requests: true,
-            per_page: 100
-          });
-
-          const candidates = runsResponse.data.workflow_runs.filter(
-            (r) => r.event !== 'pull_request' && r.head_sha === artifactSha
-          );
-
-          if (candidates.length === 0) {
-            core.setFailed(
-              `No successful ${workflowFile} run on '${devBranch}' found for ${artifactSha}. ` +
-              `If dev CI is still running or QA deployment has not finished, wait and re-run this job. ` +
-              `If the commit skipped CI (e.g. [skip ci]), push a new commit to ${devBranch} or trigger the workflow manually.`
-            );
-            return;
-          }
+          core.info(`Expected branch: ${sourceBranch}`);
 
           const expectedName = `python-app-${artifactSha}`;
-          const problems = [];
+          let candidates = [];
+          let problems = [];
 
-          // Newest first (API default). Take the first run that really has the artifact.
-          for (const run of candidates) {
-            core.info(`Checking run ${run.id} (${run.event}) ${run.html_url}`);
-
-            const artifactsResponse = await github.rest.actions.listWorkflowRunArtifacts({
+          for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            const runsResponse = await github.rest.actions.listWorkflowRuns({
               owner, repo,
-              run_id: run.id,
-              name: expectedName,
+              workflow_id: workflowFile,
+              ...(isHotfixBranch ? { branch: sourceBranch, event: 'pull_request' } : {
+                head_sha: artifactSha,
+                branch: sourceBranch,
+                exclude_pull_requests: true
+              }),
+              status: 'success',
               per_page: 100
             });
 
-            const matches = artifactsResponse.data.artifacts.filter((a) => a.name === expectedName);
-            const artifact = matches.find((a) => !a.expired);
+            candidates = runsResponse.data.workflow_runs.filter(
+              (r) => isHotfixBranch
+                ? r.event === 'pull_request' && r.head_branch === sourceBranch
+                : r.event !== 'pull_request' && r.head_sha === artifactSha
+            );
+            problems = [];
 
-            if (!artifact) {
-              problems.push(
-                matches.length > 0
-                  ? `run ${run.id}: artifact '${expectedName}' has expired`
-                  : `run ${run.id}: artifact '${expectedName}' not found`
-              );
-              continue;
+            if (candidates.length === 0) {
+              core.info(`Attempt ${attempt}/${maxAttempts}: no successful run found yet.`);
+            } else {
+              // Newest first (API default). Take the first run that really has the artifact.
+              for (const run of candidates) {
+                core.info(`Checking run ${run.id} (${run.event}) ${run.html_url}`);
+
+                const artifactsResponse = await github.rest.actions.listWorkflowRunArtifacts({
+                  owner, repo,
+                  run_id: run.id,
+                  name: expectedName,
+                  per_page: 100
+                });
+
+                const matches = artifactsResponse.data.artifacts.filter((a) => a.name === expectedName);
+                const artifact = matches.find((a) => !a.expired);
+
+                if (!artifact) {
+                  problems.push(
+                    matches.length > 0
+                      ? `run ${run.id}: artifact '${expectedName}' has expired`
+                      : `run ${run.id}: artifact '${expectedName}' not found`
+                  );
+                  continue;
+                }
+
+                core.info(`CI run ID: ${run.id}`);
+                core.info(`Artifact ID: ${artifact.id}`);
+                core.info(`Artifact digest: ${artifact.digest ?? '(none recorded)'}`);
+
+                core.setOutput('run_id', run.id);
+                core.setOutput('artifact_id', artifact.id);
+                core.setOutput('artifact_name', artifact.name);
+                core.setOutput('artifact_digest', artifact.digest ?? '');
+                return;
+              }
+
+              core.info(`Attempt ${attempt}/${maxAttempts}: no usable artifact found yet.`);
             }
 
-            core.info(`Dev CI run ID: ${run.id}`);
-            core.info(`Artifact ID: ${artifact.id}`);
-            core.info(`Artifact digest: ${artifact.digest ?? '(none recorded)'}`);
-
-            core.setOutput('run_id', run.id);
-            core.setOutput('artifact_id', artifact.id);
-            core.setOutput('artifact_name', artifact.name);
-            core.setOutput('artifact_digest', artifact.digest ?? '');
-            return;
+            if (attempt < maxAttempts) await sleep(delayMs);
           }
 
-          core.setFailed(
-            `Successful run(s) found for ${artifactSha}, but none has a usable artifact:\n  - ` +
-            problems.join('\n  - ') +
-            `\nIf the artifact expired, run the dev workflow manually (workflow_dispatch) on '${devBranch}' ` +
-            `to regenerate it, then re-run this job.`
-          );
+          if (candidates.length === 0) {
+            core.setFailed(
+              `No successful ${workflowFile} run on '${sourceBranch}' found for ${artifactSha} after ${maxAttempts} attempt(s). ` +
+              (isHotfixBranch
+                ? `Ensure the hotfix pull request workflow completed successfully and published '${expectedName}'.`
+                : `If the commit skipped CI (e.g. [skip ci]), push a new commit to ${sourceBranch} or trigger the workflow manually.`)
+            );
+          } else {
+            core.setFailed(
+              `Successful run(s) found for ${artifactSha}, but none has a usable artifact after ${maxAttempts} attempt(s):\n  - ` +
+              problems.join('\n  - ') +
+              (isHotfixBranch
+                ? `\nRe-run the hotfix pull request workflow to publish '${expectedName}' again.`
+                : `\nIf the artifact expired, run the dev workflow manually (workflow_dispatch) on '${sourceBranch}' ` +
+                  `to regenerate it, then re-run this job.`)
+            );
+          }

@@ -21,7 +21,7 @@ inputs:
   retry-delay-seconds:
     description: Seconds to wait between attempts
     required: false
-    default: '5'
+    default: '10'
   github-token:
     description: Token used to call the GitHub API (needs pull-requests:read)
     required: false
@@ -32,8 +32,11 @@ outputs:
     description: Number of the merged PR
     value: ${{ steps.resolve.outputs.pr_number }}
   head_sha:
-    description: Head commit SHA of the merged PR (the commit the dev artifact was built from)
+    description: Head commit SHA of the merged PR (the commit the promoted artifact was built from)
     value: ${{ steps.resolve.outputs.head_sha }}
+  head_branch:
+    description: Source branch of the merged PR
+    value: ${{ steps.resolve.outputs.head_branch }}
 
 runs:
   using: composite
@@ -54,6 +57,7 @@ runs:
           const commitSha = process.env.COMMIT_SHA;
           const baseBranch = process.env.BASE_BRANCH;
           const headBranch = process.env.HEAD_BRANCH;
+          const allowHotfix = baseBranch === 'main';
           const maxAttempts = Math.max(1, parseInt(process.env.MAX_ATTEMPTS, 10) || 6);
           const delayMs = Math.max(0, parseInt(process.env.RETRY_DELAY_SECONDS, 10) || 5) * 1000;
           const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -64,7 +68,7 @@ runs:
           }
 
           core.info(`Commit SHA: ${commitSha}`);
-          core.info(`Expecting merged PR: ${headBranch} -> ${baseBranch}`);
+          core.info(`Expecting merged PR: ${headBranch}${allowHotfix ? ' or hotfix/*' : ''} -> ${baseBranch}`);
 
           // The commit -> PR association can lag right after a merge, so retry.
           let mergedPr;
@@ -79,7 +83,7 @@ runs:
               (pr) =>
                 pr.merged_at &&
                 pr.base.ref === baseBranch &&
-                pr.head.ref === headBranch &&
+                (pr.head.ref === headBranch || (allowHotfix && pr.head.ref.startsWith('hotfix/'))) &&
                 pr.head.repo &&
                 pr.head.repo.full_name === `${owner}/${repo}` &&
                 pr.merge_commit_sha === commitSha
@@ -93,14 +97,16 @@ runs:
 
           if (!mergedPr) {
             core.setFailed(
-              `No merged ${headBranch} -> ${baseBranch} PR was found whose merge_commit_sha matches ${commitSha}. ` +
-              `Direct pushes, hotfix branches and reverts are not deployable through this pipeline.`
+              `No merged ${headBranch}${allowHotfix ? ' or hotfix/*' : ''} -> ${baseBranch} PR was found whose merge_commit_sha matches ${commitSha}. ` +
+              `Direct pushes and reverts are not deployable through this pipeline.`
             );
             return;
           }
 
           core.info(`PR number : #${mergedPr.number}`);
           core.info(`PR head SHA: ${mergedPr.head.sha}`);
+          core.info(`PR head branch: ${mergedPr.head.ref}`);
 
           core.setOutput('pr_number', mergedPr.number);
           core.setOutput('head_sha', mergedPr.head.sha);
+          core.setOutput('head_branch', mergedPr.head.ref);
