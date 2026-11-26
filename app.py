@@ -18,7 +18,7 @@ def health():
 def version():
     return "Version 1.0.0"
 
-@app.route("/auther")
+@app.route("/author")
 def author():
     return "Admin"
 
