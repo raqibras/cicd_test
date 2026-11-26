@@ -18,5 +18,9 @@ def health():
 def version():
     return "Version 1.0.0"
 
+@app.route("/auther")
+def author():
+    return "Admin"
+
 if __name__ == "__main__":
     app.run(debug=False)
